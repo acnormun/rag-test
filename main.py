@@ -2,9 +2,8 @@ import os
 from dotenv import load_dotenv
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.chains import RetrievalQA
 
 # === Restaurador de identificadores ===
 def restaurar_identificadores(resposta: str, mapa_dir: str) -> str:
@@ -20,6 +19,11 @@ def restaurar_identificadores(resposta: str, mapa_dir: str) -> str:
     for ident in sorted(substituicoes, key=len, reverse=True):
         nome = substituicoes[ident]
         resposta = resposta.replace(ident, f"{nome} (identificado como {ident})")
+
+    # Remove mensagem_ok se já houver mensagens de suspeição
+    if "<mensagem>" in resposta and "<mensagem_ok>" in resposta:
+        import re
+        resposta = re.sub(r"<mensagem_ok>.*?</mensagem_ok>", "", resposta, flags=re.DOTALL)
 
     return resposta
 
@@ -48,7 +52,12 @@ for nome in arquivos_txt:
 print(f"📄 Documentos carregados: {len(documents)}")
 
 # 2. Divide os documentos
-text_splitter = CharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+text_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=500,
+    chunk_overlap=50,
+    length_function=len,
+    separators=["\n\n", "\n", ".", " ", ""]
+)
 texts = text_splitter.split_documents(documents)
 print(f"🧩 Partes (chunks) geradas: {len(texts)}")
 
@@ -65,15 +74,7 @@ db = FAISS.from_documents(texts, embeddings)
 # 5. Define modelo LLM
 llm = ChatOpenAI(model_name="gpt-3.5-turbo")
 
-# 6. Configura sistema RAG
-qa = RetrievalQA.from_chain_type(
-    llm=llm,
-    chain_type="stuff",
-    retriever=db.as_retriever(),
-    verbose=True
-)
-
-# 7. Prompt personalizado
+# 6. Prompt personalizado
 prompt_personalizado = """#PERSONA:
 Você é um analista com mais de 30 anos de experiência, especialista em análise de impedimento, suspeição e competência de câmaras em processos jurídicos.
 
@@ -86,39 +87,44 @@ Você é um analista com mais de 30 anos de experiência, especialista em análi
 ### [IMPEDIMENTO E SUSPEIÇÃO]
 
 1. Analise o conteúdo integral do processo.
-2. Liste todos os identificadores `#SUSP_<IDENTIFICADOR>` mencionados.
-3. Para cada identificador listado, retorne no formato:
+2. Identifique todos os identificadores `#SUSP_<IDENTIFICADOR>` no texto.
+3. Liste cada identificador único apenas uma vez.
+4. Para cada identificador listado, retorne a seguinte mensagem:
 <mensagem>
 *ATENÇÃO!* O processo possui possível impedimento ou suspeição: participante identificado como `#SUSP_<IDENTIFICADOR>`.
 </mensagem>
-4. Caso não encontre nenhum identificador do tipo `#SUSP_*`, retorne:
+5. Se nenhum identificador `#SUSP_` for encontrado, retorne:
 <mensagem_ok>
 O processo está livre de impedimentos e suspeições.
 </mensagem_ok>
 
 ### [COMPETÊNCIA – 3ª CÂMARA DE DIREITO PÚBLICO]
 
-5. Verifique se o processo trata de matéria típica de Direito Público, com base em:
+6. Verifique se o processo trata de matéria típica de Direito Público, com base em:
    - Envolvimento de ente público
    - Temas como: servidores públicos, licitações, contratos, improbidade, tributos, atos administrativos
-6. Se for Direito Público, retorne:
+7. Se for Direito Público, retorne:
 <mensagem_competencia>
 ✅ Confirma-se que o processo deve tramitar na **3ª Câmara de Direito Público**.
 </mensagem_competencia>
-7. Caso contrário, retorne:
+8. Caso contrário, retorne:
 <mensagem_competencia_erro>
 ⚠️ Atenção: o processo não apresenta elementos que justifiquem sua tramitação na 3ª Câmara de Direito Público.
 </mensagem_competencia_erro>
 
 ### [CONFORMIDADE NORMATIVA]
-8. Comente se há indício de irregularidade processual com base no CPC ou Regimento Interno.
+9. Comente se há indício de irregularidade processual com base no CPC ou Regimento Interno.
 """
 
-# 8. Envia o prompt
+# 7. Junta os textos + prompt
+conteudo = "\n".join([doc.page_content for doc in texts])
+entrada = f"{prompt_personalizado}\n\n{conteudo[:15000]}"  # Limite de segurança
+
+# 8. Envia direto para o modelo
 print(f"\n🧠 Enviando análise para o modelo...")
-resposta = qa.run(prompt_personalizado)
+resposta = llm.invoke(entrada)
 
 # 9. Restaura identificadores para nomes reais
-resposta_final = restaurar_identificadores(resposta, mapa_dir="mapas")
+resposta_final = restaurar_identificadores(resposta.content, mapa_dir="mapas")
 
 print(f"\n✅ Resposta final:\n{resposta_final}")

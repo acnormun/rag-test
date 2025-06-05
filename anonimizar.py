@@ -15,32 +15,26 @@ def carregar_suspeitos_mapeados(caminho="suspeitos.txt") -> dict:
             if "|" in linha:
                 ident, nome = linha.strip().split("|", 1)
                 partes = nome.strip().split()
-                # Gera combinações de partes (2 ou mais palavras)
-                for i in range(len(partes)):
-                    for j in range(i+1, len(partes)+1):
-                        trecho = " ".join(partes[i:j])
-                        if len(trecho.split()) >= 2:  # Evita palavras únicas
-                            chave = normalizar(trecho)
-                            mapa[chave] = ident
+                if len(partes) >= 2:
+                    chave_nome_completo = normalizar(nome)
+                    chave_nome_sobrenome = normalizar(f"{partes[0]} {partes[-1]}")
+                    mapa[chave_nome_completo] = (ident, nome)
+                    mapa[chave_nome_sobrenome] = (ident, nome)
     return mapa
-
 
 # === Extrai nomes compostos (até 5 palavras com iniciais maiúsculas) ===
 def extrair_nomes(texto):
     padrao_nome = r'\b(?:[A-ZÁ-Ú]{2,}|[A-ZÁ-Ú][a-zá-ú]{2,})(?:\s+(?:[dD][aeo]s?|[Dd]e|[Dd]o|[Dd]a)?\s*(?:[A-ZÁ-Ú]{2,}|[A-ZÁ-Ú][a-zá-ú]{2,})){0,4}\b'
     nomes = re.findall(padrao_nome, texto)
-
-    # Remove duplicatas e palavras comuns não nomeáveis
     palavras_descartadas = {'E', 'EM', 'NO', 'NA', 'DOS', 'DAS', 'DE', 'DO', 'DA', 'AOS', 'AO'}
     nomes_filtrados = [n.strip() for n in set(nomes) if n.upper() not in palavras_descartadas and len(n.strip()) >= 3]
-
-    return nomes_filtrados
+    return sorted(nomes_filtrados, key=len, reverse=True)  # mais longos primeiro
 
 # === Aplica regex de anonimização genérica ===
 def anonimizar_texto(texto: str) -> str:
     substituicoes = {
-        r'\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b': '[CPF]',
-        r'\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b': '[CNPJ]',
+        r'\b\d{3}\.??\d{3}\.??\d{3}-??\d{2}\b': '[CPF]',
+        r'\b\d{2}\.??\d{3}\.??\d{3}/??\d{4}-??\d{2}\b': '[CNPJ]',
         r'\b\d{2}/\d{2}/\d{4}\b': '[DATA]',
         r'\b\d{4}-\d{2}-\d{2}\b': '[DATA_ISO]',
         r'\b[\w\.-]+@[\w\.-]+\.\w{2,4}\b': '[EMAIL]',
@@ -55,26 +49,32 @@ def anonimizar_texto(texto: str) -> str:
 def anonimizar_com_identificadores(texto: str, mapa_suspeitos: dict) -> tuple[str, dict]:
     nomes_encontrados = extrair_nomes(texto)
     reverso = {}
-    contador_nomes = 1  # para nomes genéricos sem suspeição
+    contador_nomes = 1
+    nomes_substituidos = set()
 
     for nome in nomes_encontrados:
         nome_norm = normalizar(nome)
 
         if nome_norm in mapa_suspeitos:
-            ident = mapa_suspeitos[nome_norm]
+            ident, nome_completo = mapa_suspeitos[nome_norm]
+            if ident not in reverso:  # só mapeia o primeiro match
+                reverso[ident] = nome_completo
             padrao = re.compile(rf'\b{re.escape(nome)}\b', flags=re.IGNORECASE)
-            texto, num_subs = padrao.subn(ident, texto)
+            texto, num_subs = padrao.subn(f"{nome_completo} ({ident})", texto)
             if num_subs > 0:
-                reverso[ident] = nome
+                nomes_substituidos.add(nome)
                 print(f"🔐 SUSPEITO detectado: '{nome}' → {ident} ({num_subs}x)")
-        else:
-            ident = f"#NOME_{contador_nomes:03}"
-            padrao = re.compile(rf'\b{re.escape(nome)}\b', flags=re.IGNORECASE)
-            texto, num_subs = padrao.subn(ident, texto)
-            if num_subs > 0:
-                reverso[ident] = nome
-                print(f"🔒 Nome comum: '{nome}' → {ident} ({num_subs}x)")
-                contador_nomes += 1
+
+    for nome in nomes_encontrados:
+        if nome in nomes_substituidos:
+            continue
+        ident = f"#NOME_{contador_nomes:03}"
+        padrao = re.compile(rf'\b{re.escape(nome)}\b', flags=re.IGNORECASE)
+        texto, num_subs = padrao.subn(ident, texto)
+        if num_subs > 0:
+            reverso[ident] = nome
+            print(f"🔒 Nome comum: '{nome}' → {ident} ({num_subs}x)")
+            contador_nomes += 1
 
     texto_anon = anonimizar_texto(texto)
     return texto_anon, reverso
