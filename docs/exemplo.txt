@@ -1,8 +1,0 @@
-Prezada Sra. Maria da Silva,
-
-Conforme solicitado, segue parecer técnico referente ao processo nº 12345/2023. 
-O documento foi enviado para o e-mail maria.silva@example.com no dia 01/06/2023. 
-O CPF informado foi 123.456.789-00 e o telefone de contato (11) 98765-4321.
-
-Atenciosamente,
-Dr. João Andrade
