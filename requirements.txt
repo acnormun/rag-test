@@ -1,0 +1,19 @@
+# LangChain e LLMs
+langchain
+langchain-community
+langchain-openai
+openai
+
+# Vetorização local
+faiss-cpu
+
+# Manipulação de arquivos e ambiente
+python-dotenv
+unstructured
+tiktoken
+
+# Leitura e manipulação de PDFs grandes
+pymupdf  # (PyMuPDF)
+
+# Extra (PDFs ou parsing específicos, se necessário futuramente)
+pypdf
